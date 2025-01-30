@@ -176,3 +176,6 @@ cython_debug/
 # Custom
 .poetry/
 secrets/
+.vscode/
+debug/
+reports/

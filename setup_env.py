@@ -4,6 +4,8 @@ A Python script to install the project dependencies.
 """
 
 import argparse
+from getpass import getpass
+import json
 from pathlib import Path
 import subprocess
 import shutil
@@ -35,18 +37,25 @@ DEPENDENCY_MANAGER_PATHS = {
     }
 }
 
+SECRETS_ROOT = Path("secrets")
+SECRETS = {
+    "email_credentials": SECRETS_ROOT / "gmail_credentials.json",
+    "api_key": SECRETS_ROOT / "fallback_API_key.json",
+}
+
 
 # =========================== INPUTS ============================
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--clear', action='store_true', help="Delete .")
+    parser.add_argument('-c', '--clear', action='store_true', help="Delete virtual environments and cache folders.")
+    parser.add_argument('-C', '--clear-secrets', action='store_true', help="Delete local secrets.")
     return parser.parse_args()
 
 
 # ========================== FUNCTIONS ==========================
 
-def clear_previous_installation():
+def clear_previous_installation(clear_secrets: bool):
     if DEPENDENCY_MANAGER_PATHS["common"]["project_venv"].is_dir():
         print(f"Deleting project virtual environment...", end="", flush=True) 
         shutil.rmtree(DEPENDENCY_MANAGER_PATHS["common"]["project_venv"])
@@ -60,6 +69,10 @@ def clear_previous_installation():
         print(f"Deleting Pytest's cache...", end="", flush=True) 
         shutil.rmtree(pytest_cache)
         print("Done.")
+    if SECRETS_ROOT.is_dir() and clear_secrets:
+        print(f"Deleting Secrets...", end="", flush=True) 
+        shutil.rmtree(SECRETS_ROOT)
+        print(f"Done")
 
 
 def create_venv(venv: str = ".venv"):
@@ -116,6 +129,37 @@ def setup_poetry():
 def install_deps():
     subprocess.run([DEPENDENCY_MANAGER_PATHS[sys.platform]["poetry_executable"], "install"], check=True)
     
+def get_email_credentials():
+    
+    email_credentials_file = SECRETS["email_credentials"]
+
+    # Check if credentials are present from a previous installation.
+    if email_credentials_file.is_file():
+        email_credentials = json.loads(email_credentials_file.read_text())
+        if email_credentials.get("address", "").endswith("@gmail.com") and email_credentials.get("pswd", ""):
+            return
+
+    # While this does the job, we could use a Pydantic model for input data validation.
+    print("\nPlease provide email credentials for API Key request")
+    address = ""
+    n = 0
+    N = 5
+    while not address.endswith("@gmail.com") and n<N:
+        address = input("gmail address: ")
+        n+=1
+    
+    if not address.endswith("@gmail.com"):
+        raise Exception("Failed to provide a valid gmail address.")
+    
+    pswd = getpass(f"Please provide app-password to connect to {address}: ")
+    pswd2 = getpass("Please repeat app-password: ")
+
+    if pswd != pswd2:
+        raise Exception("Passwords do not match.")
+
+    email_credentials_file.write_text(json.dumps({"address": address, "pswd": pswd}))
+    print("Email credentials stored successfully.")
+    
 
 def main(args):
 
@@ -124,19 +168,23 @@ def main(args):
     if sys.version_info[:2] != (3, 12):
         print("WARNING: Developed using Python 3.12. If running into issues with other versions, switch to 3.12.")
 
-    clear_previous_installation()
-
     if args.clear:
-        return
+        clear_previous_installation(args.clear_secrets)        
 
     # Create project virtual environment.
-    create_venv(DEPENDENCY_MANAGER_PATHS["common"]["project_venv"])
-    
+    if not DEPENDENCY_MANAGER_PATHS["common"]["project_venv"].is_dir():
+        create_venv(DEPENDENCY_MANAGER_PATHS["common"]["project_venv"])
+        
     # Setup dependency manager
-    setup_poetry()
+    if not DEPENDENCY_MANAGER_PATHS["common"]["poetry_dir"].is_dir():
+        setup_poetry()
 
     # Intall dependencies
     install_deps()
+
+    # Ask for email credentials if missing.
+    SECRETS_ROOT.mkdir(exist_ok=True, parents=True)
+    get_email_credentials()
 
 
 if __name__ == "__main__":
