@@ -15,11 +15,13 @@ API_REQUEST_CAP_SLEEP = 5  # Seconds between attempts after api request cap is r
 
 
 # Input parameters
-# Dates and deltas could be randomized, but I would need more information about what to expect from the database.
-# I included a very old datapoint since the antartic bases were founded around 1988-1989.
+# Dates and intervals could be randomized, but I would need more information about what to expect from the database.
 VALID_STATION_IDENTIFICATORS = ["89064", "89064R", "89064RA", "89070"]
-STARTING_DATES = [datetime(1990, 1, 25), datetime(2005, 12, 5), datetime(2010, 12, 5), datetime(2019, 12, 5), datetime(2023, 12, 5)]
-VALID_TIME_DELTAS = [timedelta(minutes=15), timedelta(minutes=25), timedelta(hours=6) , timedelta(days=29)]
+STARTING_DATES = [
+    # Included a very old datapoint since the antartic bases were founded around 1988-1989.
+    datetime(year=y, month=6, day=15) for y in [1990, 2000, 2010, 2020, 2023, 2024]
+]
+VALID_INTERVALS = [timedelta(minutes=15), timedelta(minutes=25), timedelta(hours=6) , timedelta(days=29)]
 
 
 def request_get_retry(url, attempts = 5, headers = None, querystring = None):
@@ -34,15 +36,15 @@ def request_get_retry(url, attempts = 5, headers = None, querystring = None):
 
 
 @pytest.fixture()
-def make_request(base_api_url, api_key_handler, station, starting_date, time_delta, request_cap_wait):
-    def _request_response(starting_date=starting_date, time_zone="CET"):
+def make_request(base_api_url, api_key_handler, station, starting_date, interval, request_cap_wait):
+    def _request_response(starting_date=starting_date, time_zone="+0000"):
         if (
             station == "89064R" and starting_date < ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE
             or station == "89064RA" and starting_date > ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE
         ):
             pytest.skip("Parameter combination not applicable.")
 
-        end_date = starting_date + time_delta
+        end_date = starting_date + interval
 
         # Prepare request components
         starting_date_string = starting_date.strftime(f"%Y-%m-%dT%H:%M:%S{time_zone}")
@@ -74,13 +76,13 @@ def make_request(base_api_url, api_key_handler, station, starting_date, time_del
 
 @pytest.mark.parametrize("station", VALID_STATION_IDENTIFICATORS)
 @pytest.mark.parametrize("starting_date", STARTING_DATES)
-@pytest.mark.parametrize("time_delta", VALID_TIME_DELTAS)
-def test_api_key_valid_request(make_request, time_delta, data_point_structure):
+@pytest.mark.parametrize("interval", VALID_INTERVALS)
+def test_api_key_valid_request(make_request, interval, data_point_structure, allow_missing_datapoints):
 
     request_response = make_request()
     if (not request_response.ok):
     # Even if no data is retrieved, we still expect a 200 code for the API request itself.
-        pytest.fail(f"Request failed: {request_response.json()}")
+        pytest.fail(f"Request failed: {request_response.text}")
 
     ## Data availability
     if request_response.json()["estado"] == 404:
@@ -94,28 +96,29 @@ def test_api_key_valid_request(make_request, time_delta, data_point_structure):
     time.sleep(0.5)
     data_response = request_get_retry(request_response.json()["datos"])
     if not data_response.ok:
-        pytest.fail(f"Data access failed: {data_response.json()}")
+        pytest.fail(f"Data access failed: {data_response.text}")
 
     data = data_response.json()
     N = len(data)
 
     ## Data validity
-    # Number of data points should be consistent with time interval selected.
-    n_points_estimated = time_delta // DATA_TIME_RESOLUTION
-    if not(n_points_estimated <= N <= (n_points_estimated + 1)):
-        pytest.fail(f"Expected {n_points_estimated} or {n_points_estimated + 1} datapoints, received {N}")
+    if not allow_missing_datapoints:
+        # Check that number of data points is consistent with the time interval selected.
+        n_points_estimated = interval // DATA_TIME_RESOLUTION
+        if not(n_points_estimated <= N <= (n_points_estimated + 1)):
+            pytest.fail(f"Expected {n_points_estimated} or {n_points_estimated + 1} datapoints, received {N}")
 
     # Verify consistency of data structure
     for i in range(0, math.ceil(N/100), N):
-        # Since the data series is a list of dictionaries, there is no way to ensure consistent structure other than
-        # checking each element. Beigh thorough may be an unnecessary consumption of testing resources. To avoid the
-        # issue, we will only verify roughly 100 equispaced datapoints.
+        # Since the data series is a list of dictionaries, there is no way to ensure check the structure is consistent
+        # other than checking each element. Beigh thorough may be an unnecessary consumption of testing resources. To
+        # mitigate the issue, we will only verify roughly 100 equispaced datapoints.
         assert set(data[i].keys()) == data_point_structure
 
 
 @pytest.mark.parametrize(
-    "station,starting_date,time_delta",
-    [(VALID_STATION_IDENTIFICATORS[0], STARTING_DATES[-1], VALID_TIME_DELTAS[1])]
+    "station,starting_date,interval",
+    [(VALID_STATION_IDENTIFICATORS[0], STARTING_DATES[-1], VALID_INTERVALS[1])]
 )
 def test_unauthorized_request(api_key_handler, make_request):
     """Test that a request made with an invalid key returns a 4XX status code."""
@@ -127,19 +130,20 @@ def test_unauthorized_request(api_key_handler, make_request):
         
 
 @pytest.mark.parametrize(
-    "station,starting_date,time_delta",
+    "station,starting_date,interval",
     [(VALID_STATION_IDENTIFICATORS[0], STARTING_DATES[-1], timedelta(hours=-15))]
 )
-def test_negative_deltas(make_request):
+def test_negative_interval(make_request):
     """Test that a request made with starting_date later than end_date simply returns no data."""
     
     response = make_request()
     assert response.json() == {'descripcion': 'No hay datos que satisfagan esos criterios', 'estado': 404}
 
 @pytest.mark.parametrize("station", VALID_STATION_IDENTIFICATORS[:1])
-@pytest.mark.parametrize("starting_date", STARTING_DATES[-2:])
-
-@pytest.mark.parametrize("time_delta", [timedelta(hours=1)])
+@pytest.mark.parametrize("starting_date", 
+    [datetime(year=2000, month=1, day=1) + i*timedelta(weeks=26) for i in range(12)]
+)
+@pytest.mark.parametrize("interval", [timedelta(hours=1)])
 def test_time_zone_consistency(make_request, starting_date):
     """
     Test time zone consistency in the output. We observe that the data provided is always UCT+0000.
@@ -149,30 +153,35 @@ def test_time_zone_consistency(make_request, starting_date):
     so that the queries in CET and CEST are referring to the exact same universal times.
 
     About parametrization:
-    - One time delta is enough for this test. Jumps on time zone consistency happening in the short term would be odd.
+    - One interval is enough for this test. Jumps on time zone consistency happening in the short term would be odd.
     - Data on this endpoint is updated yearly. We will use two dates per year: one during summer, one during winter.
+    
+    So one interval and two dates per year will suffice. To avoid making the exercise slower, we will test a few.
     """
 
     request_response_cet = make_request(starting_date=starting_date, time_zone="CET")
     if (not request_response_cet.ok):
-    # In this case, we cannot cover this functionality if there is no data.
+    # The test serves no purpose if this data is not avaiable.
         pytest.skip(f"No data to be validated for the current query.")
 
     # CET data retrieval
-    time.sleep(0.5)
-    data_CET = request_get_retry(request_response_cet.json()["datos"]).json()
+    cet_data_response = request_get_retry(request_response_cet.json()["datos"])
+    if not cet_data_response.ok:
+        pytest.fail(f"Data access failed: {cet_data_response.text}")
+    cet_data=cet_data_response.json()
 
     request_response_cest = make_request(starting_date=starting_date+timedelta(hours=1), time_zone="CEST")
     if (not request_response_cest.ok):
-    # In this case, we cannot cover this functionality if there is no data.
+    # The exact UCT interval was requested. Failure means CET/CEST is not respected.
         pytest.fail(f"Should be exact same data.")
 
     #  CEST retrieval
-    time.sleep(0.5)
-    data_CEST = request_get_retry(request_response_cest.json()["datos"]).json()
+    cest_data_response = request_get_retry(request_response_cest.json()["datos"])
+    if not cest_data_response.ok:
+        pytest.fail(f"Data access failed: {cest_data_response.text}")
+    cest_data=cest_data_response.json()
 
-    assert data_CET[0]["fhora"] == data_CEST[0]["fhora"]
-
-@pytest.mark.skip
-def test_JCI_db_switch():
-    raise NotImplementedError
+    # Verify times match
+    cet_times = [datapoint["fhora"] for datapoint in cet_data]
+    cest_times = [datapoint["fhora"] for datapoint in cest_data]
+    assert cet_times == cest_times
