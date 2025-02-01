@@ -10,11 +10,11 @@ from tkinter import messagebox
 import pytest
 from selenium.webdriver.common.by import By
 
-from setup_env import SECRETS
-from tests.conftest import API_KEY_EMAIL_KEY, REQUEST_EMAIL_KEY, fail_with_selenium_screenshot, SECRETS
+from tests.conftest import API_KEY_EMAIL_KEY, REQUEST_EMAIL_KEY, fail_with_selenium_screenshot
 
 logger = logging.getLogger(__name__)
 logger.setLevel("INFO")
+
 
 @pytest.fixture()
 def wait_until_new_email(email_headers, gmail_imap_object, email_counts_before):
@@ -72,10 +72,9 @@ def test_API_key_request(
         key_generation_page,
         webdriver_factory,
         email_credentials,
-        # email_headers,
-        # gmail_imap_object,
-        # email_counts_before,
         wait_until_new_email,
+        api_key_handler,
+        update_key,
     ):
     """
     This is a long workflow for a test. We are keeping it this way because each step of the process heavily relies
@@ -151,8 +150,7 @@ def test_API_key_request(
     api_key = match.group(1)
     assert api_key
 
-    # Update fallback API Key
-    # This key will be stored so that API tests can be executed even if the API key generation process fails
-    # during this session. That way, we keep tests independent of each other.
-    Path(SECRETS["api_key"]).write_text(json.dumps({"key":api_key}))
+    # Update API Key if requested
+    if update_key:
+        api_key_handler.update_key(api_key)
     

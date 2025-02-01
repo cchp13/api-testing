@@ -13,10 +13,34 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.webdriver import WebDriver
 from setup_env import SECRETS
 
+from tests.utils.utils import ApiKeyHandler
+
 # ============================================== Constants ==============================================
 
+# Email dict keys
 REQUEST_EMAIL_KEY = "request"
 API_KEY_EMAIL_KEY = "key"
+
+# Secrets dict keys
+EMAIL_FILE_NAME = "email_credentials"
+API_KEY_FILE_NAME = "api_key"
+API_KEY_JSON_KEY = "api_key"
+
+# ============================================== Options ==============================================
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--wait-for-capacity",
+        action="store",
+        default=5,
+        help="Wait given minutes for the request cap to refresh.",
+    )
+    parser.addoption(
+        "--update-api-key",
+        action="store_true",
+        default=False,
+        help="Whether to update the key locally stored with the outcome of the key retrieval test.",
+    )
 
 # ============================================== Fixtures ==============================================
 # AEMET
@@ -36,11 +60,74 @@ def email_headers():
         API_KEY_EMAIL_KEY: "Alta en el servicio AEMET OpenData",
     }
 
+@pytest.fixture(scope="session")
+def base_api_url():
+    return "https://opendata.aemet.es/opendata/api"
+
+@pytest.fixture(scope="session")
+def data_point_structure():
+    return {
+        'rec',
+        'ins',
+        'ttierra',
+        'tsmx',
+        'albedo',
+        'latitud',
+        'altitud',
+        'dddx',
+        'uvi',
+        'tsb',
+        'nombre',
+        'longitud',
+        'srs',
+        'rad_kj_m2',
+        'tsmn',
+        'alt_nieve',
+        'vel',
+        'fhora',
+        'temp',
+        'lluv',
+        'tcielo',
+        'identificacion',
+        'dddstd',
+        'difusa',
+        'tmn',
+        'pres',
+        'par',
+        'hr',
+        'ts',
+        'neta',
+        'uvb',
+        'uvab',
+        'qdato',
+        'ir_solar',
+        'global',
+        'velx',
+        'directa',
+        'rad_w_m2',
+        'ddd',
+        'tmx'
+    }
+
+@pytest.fixture(scope="session")
+def request_cap_wait(request):
+    return int(request.config.getoption("--wait-for-capacity"))
+
+@pytest.fixture(scope="session")
+def update_key(request):
+    return bool(request.config.getoption("--update-api-key"))
+
+@pytest.fixture(scope="session")
+def api_key_handler():
+
+    return ApiKeyHandler(SECRETS[API_KEY_FILE_NAME], API_KEY_JSON_KEY)
+
+
 # Email service
 
 @pytest.fixture(scope="session")
 def email_credentials() -> dict[str, str]:
-    email_credentials_file = SECRETS["email_credentials"]
+    email_credentials_file = SECRETS[EMAIL_FILE_NAME]
     return json.loads(email_credentials_file.read_text())
 
 
