@@ -1,5 +1,6 @@
 
 from datetime import datetime, timedelta
+import logging
 import math
 import time
 from unittest.mock import patch
@@ -7,6 +8,10 @@ from urllib.parse import quote
 
 import requests
 import pytest
+
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE = datetime(2007,3,7)
@@ -24,19 +29,59 @@ STARTING_DATES = [
 VALID_INTERVALS = [timedelta(minutes=15), timedelta(minutes=25), timedelta(hours=6) , timedelta(days=29)]
 
 
-def request_get_retry(url, attempts = 5, headers = None, querystring = None):
-    # In order to focus on data validity, we will try to avoid failing tests due to non-functional issues.
+def request_get_with_exception_handling(url, **kwargs):
     n = 0
-    response = requests.get(url=url, headers=headers, params=querystring)
-    while not response.ok and n<attempts:
-        time.sleep(1)
-        response = requests.get(url=url, headers=headers, params=querystring)
-        n+=1
-    return response
+    N = 5
+    while n<N:
+        try:
+            return requests.get(url, **kwargs)
+        except Exception as e:                
+            n+=1
+            logger.error(f"Request to {url=} failed with exception: {str(e)}")
+            
+    pytest.fail(f"Failed to complete the request. Inspect logged ERRORs for more information.")
+
+def is_too_many_requests(response):
+    """
+    There are two different types of requests being made for the tests: requests to the API endpoint to query for
+    specific data, and requests to retrieve the json after successful data requests. Their structure differs.
+    """
+    try:
+        return response.json()["estado"] == 429
+    except:
+        return "429 Too Many Requests" in response.text
 
 
 @pytest.fixture()
-def make_request(base_api_url, api_key_handler, station, starting_date, interval, request_cap_wait):
+def request_get_retry(request_cap_wait):
+    def _request_get_retry(url, headers = None, querystring = None):
+        # In order to focus on data validity, we will try to avoid failing tests due to non-functional issues.
+        n = 0
+        N = 5
+        response = request_get_with_exception_handling(url=url, headers=headers, params=querystring)
+        while not response.ok and n<N:
+            if is_too_many_requests(response):
+                m = 0
+                M = request_cap_wait * 60 / API_REQUEST_CAP_SLEEP
+                while is_too_many_requests(response) and m<M:
+                    # Loop to wait for api request limit to expire
+                    response = request_get_with_exception_handling(url=url, headers=headers, params=querystring)
+                    time.sleep(API_REQUEST_CAP_SLEEP)
+                    m+=1
+
+                if is_too_many_requests(response):
+                    # Note that we may fail during the first iteration of the outer loop if we fail for this reason.
+                    pytest.fail("Failed due to persistent API request cap. Increase value of --wait-for-cap.")
+            time.sleep(1)
+            response = request_get_with_exception_handling(url=url, headers=headers, params=querystring)
+            n+=1
+        return response
+
+    return _request_get_retry
+
+
+@pytest.fixture()
+def make_request(base_api_url, api_key_handler, station, starting_date, interval, request_get_retry):
     def _request_response(starting_date=starting_date, time_zone="+0000"):
         if (
             station == "89064R" and starting_date < ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE
@@ -55,19 +100,6 @@ def make_request(base_api_url, api_key_handler, station, starting_date, interval
 
         # Request to target endpoint
         response = request_get_retry(url, headers=headers, querystring=querystring)
-
-        if response.json()["estado"] == 429:
-            m = 0
-            M = request_cap_wait * 60 / API_REQUEST_CAP_SLEEP
-            while response.json()["estado"] == 429 and m<M:
-                # Loop to wait for api request limit to expire
-                response = request_get_retry(url=url, headers=headers, querystring=querystring)
-                time.sleep(API_REQUEST_CAP_SLEEP)
-                m+=1
-
-            if response.json()["estado"] == 429:
-                # Note that we may fail during the first iteration of the outer loop if we fail for this reason.
-                pytest.fail("Failed due to API request cap. Increase value of --wait-for-cap option to avoid issue.")
             
         return response
     
@@ -77,7 +109,7 @@ def make_request(base_api_url, api_key_handler, station, starting_date, interval
 @pytest.mark.parametrize("station", VALID_STATION_IDENTIFICATORS)
 @pytest.mark.parametrize("starting_date", STARTING_DATES)
 @pytest.mark.parametrize("interval", VALID_INTERVALS)
-def test_api_key_valid_request(make_request, interval, data_point_structure, allow_missing_datapoints):
+def test_api_key_valid_request(make_request, interval, data_point_structure, allow_missing_datapoints, request_get_retry):
 
     request_response = make_request()
     if (not request_response.ok):
@@ -144,7 +176,7 @@ def test_negative_interval(make_request):
     [datetime(year=2000, month=1, day=1) + i*timedelta(weeks=26) for i in range(12)]
 )
 @pytest.mark.parametrize("interval", [timedelta(hours=1)])
-def test_time_zone_consistency(make_request, starting_date):
+def test_time_zone_consistency(make_request, starting_date, request_get_retry):
     """
     Test time zone consistency in the output. We observe that the data provided is always UCT+0000.
 

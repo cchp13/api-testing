@@ -20,7 +20,7 @@ class ApiKeyHandler:
         Get the current API key.
 
         Returns:
-            Optional[str]: The API key.
+            str: The API key.
         """
         return self._key
 
@@ -29,7 +29,7 @@ class ApiKeyHandler:
         Read the API key from the file.
 
         Returns:
-            Optional[str]: The API key, or None if not found.
+            str: The API key, or None if not found.
         """
         return self._load_key()
 

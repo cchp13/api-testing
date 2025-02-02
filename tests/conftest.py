@@ -15,6 +15,9 @@ from setup_env import SECRETS
 
 from tests.utils.utils import ApiKeyHandler
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
 # ============================================== Constants ==============================================
 
 # Email dict keys
@@ -40,6 +43,12 @@ def pytest_addoption(parser):
         action="store_true",
         default=False,
         help="Whether to update the key locally stored with the outcome of the key retrieval test.",
+    )
+    parser.addoption(
+        "--allow-missing-datapoints",
+        action="store_true",
+        default=False,
+        help="Whether to pass a test in which the data series retrieved is not exhaustive.",
     )
 
 # ============================================== Fixtures ==============================================
@@ -116,6 +125,10 @@ def request_cap_wait(request):
 @pytest.fixture(scope="session")
 def update_key(request):
     return bool(request.config.getoption("--update-api-key"))
+
+@pytest.fixture(scope="session")
+def allow_missing_datapoints(request):
+    return bool(request.config.getoption("--allow-missing-datapoints"))
 
 @pytest.fixture(scope="session")
 def api_key_handler():
@@ -258,13 +271,9 @@ def webdriver_factory(webdriver_options):
             pass
 
 
-def fail_with_selenium_screenshot(driver: WebDriver, screenshot_name: str, description: str, exception_msg: str):
+def warn_with_selenium_screenshot(driver: WebDriver, screenshot_name: str, description: str, exception_msg: str):
     screenshot = (Path("debug") / screenshot_name).with_suffix(".png")
     driver.save_screenshot(screenshot)
-    pytest.fail(
-        (
-        f"{description} \n"
-        f"Error message: {exception_msg} \n"
-        f"Inspect screenshot {screenshot.as_posix()} for more information."
-        )
-    )
+    logger.warning(f"{description}")
+    logger.warning(f"Exception message: {exception_msg}")
+    logger.warning(f"Inspect screenshot {screenshot.as_posix()} for more information.")

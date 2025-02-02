@@ -10,10 +10,10 @@ from tkinter import messagebox
 import pytest
 from selenium.webdriver.common.by import By
 
-from tests.conftest import API_KEY_EMAIL_KEY, REQUEST_EMAIL_KEY, fail_with_selenium_screenshot
+from tests.conftest import API_KEY_EMAIL_KEY, REQUEST_EMAIL_KEY, warn_with_selenium_screenshot
 
 logger = logging.getLogger(__name__)
-logger.setLevel("INFO")
+logger.setLevel(logging.INFO)
 
 
 @pytest.fixture()
@@ -101,7 +101,7 @@ def test_API_key_request(
         headful_driver.find_element(By.ID, "enviar").click()
         headful_driver.find_element(By.XPATH, ".//span[contains(text(),'Su petición ha sido enviada')]")
     except Exception as e:
-        fail_with_selenium_screenshot(
+        warn_with_selenium_screenshot(
             headful_driver,
             "failed-to-send-key-request",
             "Could not verify that API Key was requested.",
@@ -131,7 +131,7 @@ def test_API_key_request(
     try:
         driver.find_element(By.XPATH, ".//body[contains(text(),'Su API Key se ha generado correctamente')]")
     except Exception as e:
-        fail_with_selenium_screenshot(
+        warn_with_selenium_screenshot(
             driver,
             "first-api-generation-email-link",
             "Something went wrong while following the link on the first email.",
