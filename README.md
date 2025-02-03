@@ -14,7 +14,7 @@ On a windows system with Python 3.12 available, run the following commands:
 ```
 python setup_env.py  # Provide required inputs
 pytest tests/end_to_end/test_api_key_retrieval.py
-pytest tests/end_to_end/ --allow-missing-datapoints --html=reports/t1/r.html
+pytest tests/end_to_end/test_api_key_validation.py --allow-missing-datapoints --html=reports/t1/r.html
 ```
 
 This will:

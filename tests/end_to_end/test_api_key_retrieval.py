@@ -45,8 +45,8 @@ def test_navigation_to_api_key_generation_page(landing_page, key_generation_page
     """Test that the provided AEMET landing page includes a functional link to the API request page."""
     ## GIVEN: A webdriver starting at AEMET data landing page.
     driver = webdriver_factory(headless=True)
-    logger.info(f"Selenium webdriver getting {landing_page["url"]}")
-    driver.get(landing_page["url"])
+    logger.info(f"Selenium webdriver getting {landing_page['url']}")
+    driver.get(landing_page['url'])
 
     ## WHEN: Clicking on API Key button.
     cards = driver.find_elements(By.CLASS_NAME, "card-block")
@@ -83,9 +83,9 @@ def test_API_key_request(
     """
     # Open a 'headful' webdriver starting at the API Key request page.
     headful_driver = webdriver_factory(headless=False)
-    logger.info(f"Selenium webdriver getting {key_generation_page["url"]}")
-    headful_driver.get(key_generation_page["url"])
-    logger.info(f"Input email {email_credentials["address"]} into the form.")
+    logger.info(f"Selenium webdriver getting {key_generation_page['url']}")
+    headful_driver.get(key_generation_page['url'])
+    logger.info(f"Input email {email_credentials['address']} into the form.")
     headful_driver.find_element(By.ID, "email").send_keys(email_credentials["address"])
     
     # Notify the tester that manual input is required

@@ -134,8 +134,8 @@ def test_api_key_valid_request(
         return
 
     ## Data retrieval
-    logger.info(f"Retrieving data from {request_response.json()["datos"]}.")
-    data_response = request_get_retry(request_response.json()["datos"])
+    logger.info(f"Retrieving data from {request_response.json()['datos']}.")
+    data_response = request_get_retry(request_response.json()['datos'])
     # We will not log this response directly, as it may contain a large amount of data.
 
     if not data_response.ok:
@@ -165,7 +165,7 @@ def test_api_key_valid_request(
         # Since the data series is a list of dictionaries, I do not see another way to ensure check the structure is
         # consistent other than checking each element. Beinh thorough may be an unnecessary consumption of testing
         # resources. To mitigate the issue, we will only verify roughly 100 equispaced datapoints for each query.
-        logger.info(f"Data point fields retrieved: {", ".join(data[i].keys())}")
+        logger.info(f"Data point fields retrieved: {', '.join(data[i].keys())}")
         assert set(data[i].keys()) == data_point_structure
 
 
@@ -230,7 +230,7 @@ def test_time_zone_consistency(make_request, starting_date, request_get_retry, s
             pytest.skip("Parametrization not relevant.")
 
         # Data retrieval
-        logger.info(f"Retrieving data from {request_response.json()["datos"]}.")
+        logger.info(f"Retrieving data from {request_response.json()['datos']}.")
         data_response = request_get_retry(request_response.json()["datos"])
         if not data_response.ok:
             pytest.fail(f"Data access failed: {data_response.text}")
