@@ -75,7 +75,7 @@ These tests do not require any user input.
 
 #### Improvements that I have not implemented on this exercise, but are relevant next steps.
 
-- Non-functional testing. This focuses on response data validation. These tests attempt by any means to get a valid response from the API, retrying queries a few times and waiting for the API request limit to reset. This approach addresses some non-functional requirements, such as performance (e.g., how slow are the requests?) and reliability (e.g., how often do valid requests fail?).
+- Non-functional testing. So far, I have focused on response data validation. These tests attempt by any means to get a valid response from the API, retrying queries a few times and waiting for the API request limit to reset. This approach addresses some non-functional requirements, such as performance (e.g., how slow are the requests?) and reliability (e.g., how often do valid requests fail?).
 - Pre-commit automatic style checks, to ensure consistent coding style.
 - Type hints: Although Python is a dynamic, loosely typed programming language, type hints can be used "as if" it were strongly typed. This enhances maintainability, robustness, and makes the code easier to read. If I were to continue working on this project, I would start by implementing a type checker. The `ApiKeyHandler` class has been thoroughly type-hinted as an example. These efforts would be supported by linters integrated into the pre-commit checks.
 - Docstrings: While I have added some docstrings where context would be helpful, I have not been exhaustive. Tests, in particular, should include docstrings with significant information, such as the test author, associated test case work item ID or hyperlink (e.g., GitHub or Azure DevOps issue), etc.
