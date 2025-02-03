@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Optional
 
 class ApiKeyHandler:
     def __init__(self, key_file: Path, api_key_key: str):
@@ -43,13 +44,16 @@ class ApiKeyHandler:
         self._save_key(key)
         self._key: str = key
 
-    def _load_key(self) -> str:
+    def _load_key(self) -> Optional[str]:
         """
         Load the API key from the file.
 
         Returns:
-            str: The API key.
+            Optional[str]: The API key.
         """
+        if not self._key_file.is_file():
+            return None
+        
         with open(self._key_file, "r") as file:
             data = json.load(file)
             return data.get(self._api_key_key)

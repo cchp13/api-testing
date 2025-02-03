@@ -4,6 +4,7 @@ A Python script to install the project dependencies.
 """
 
 import argparse
+from email.utils import parseaddr
 from getpass import getpass
 import json
 from pathlib import Path
@@ -11,6 +12,7 @@ import subprocess
 import shutil
 import sys
 
+from tests.utils.imap_handler import IMAP_handler
 
 # ========================== CONSTANTS ==========================
 
@@ -48,14 +50,14 @@ SECRETS = {
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--clear', action='store_true', help="Delete virtual environments and cache folders.")
-    parser.add_argument('-C', '--clear-secrets', action='store_true', help="Delete local secrets.")
+    parser.add_argument("-c", "--clear", action="store_true", help="Delete virtual environments and cache folders.")
+    parser.add_argument("-C", "--clear-secrets", action="store_true", help="Delete local secrets.")
     return parser.parse_args()
 
 
 # ========================== FUNCTIONS ==========================
 
-def clear_previous_installation(clear_secrets: bool):
+def clear_previous_installation():
     if DEPENDENCY_MANAGER_PATHS["common"]["project_venv"].is_dir():
         print(f"Deleting project virtual environment...", end="", flush=True) 
         shutil.rmtree(DEPENDENCY_MANAGER_PATHS["common"]["project_venv"])
@@ -69,7 +71,10 @@ def clear_previous_installation(clear_secrets: bool):
         print(f"Deleting Pytest's cache...", end="", flush=True) 
         shutil.rmtree(pytest_cache)
         print("Done.")
-    if SECRETS_ROOT.is_dir() and clear_secrets:
+
+
+def clear_secrets():
+    if SECRETS_ROOT.is_dir():
         print(f"Deleting Secrets...", end="", flush=True) 
         shutil.rmtree(SECRETS_ROOT)
         print(f"Done")
@@ -81,16 +86,21 @@ def create_venv(venv: str = ".venv"):
         subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", "virtualenv"],check=True)
 
     print(f"Creating virtual environment at {venv}...", end="", flush=True) 
-    subprocess.run([sys.executable, "-m", "venv", venv], check=True, shell=DEPENDENCY_MANAGER_PATHS[sys.platform]["shell"])
+    subprocess.run(
+        [sys.executable, "-m", "venv", venv], check=True, shell=DEPENDENCY_MANAGER_PATHS[sys.platform]["shell"]
+    )
     print("Done.")
+
 
 def install_poetry():
     create_venv(DEPENDENCY_MANAGER_PATHS["common"]["poetry_venv"])
+    executable = DEPENDENCY_MANAGER_PATHS[sys.platform]["poetry_python_executable"]
     subprocess.run(
-        [DEPENDENCY_MANAGER_PATHS[sys.platform]["poetry_python_executable"], "-m", "pip", "install", "--upgrade", "poetry"],
+        [executable, "-m", "pip", "install", "--upgrade", "poetry"],
         check=True,
         shell=DEPENDENCY_MANAGER_PATHS[sys.platform]["shell"]
     )
+
 
 def link_poetry_to_project():
     poetry_executable = DEPENDENCY_MANAGER_PATHS[sys.platform]["poetry_executable"]
@@ -113,6 +123,7 @@ def link_poetry_to_project():
     else:
         subprocess.run(["ln", "-sf", poetry_executable, poetry_link_on_project], check=True)
 
+
 def configure_poetry():
     poetry_executable = DEPENDENCY_MANAGER_PATHS[sys.platform]["project_poetry_link"]
     poetry_cache = DEPENDENCY_MANAGER_PATHS["common"]["poetry_cache"]
@@ -126,9 +137,11 @@ def setup_poetry():
     link_poetry_to_project()
     configure_poetry()
 
+
 def install_deps():
     subprocess.run([DEPENDENCY_MANAGER_PATHS[sys.platform]["poetry_executable"], "install"], check=True)
     
+
 def get_email_credentials():
     
     email_credentials_file = SECRETS["email_credentials"]
@@ -136,19 +149,23 @@ def get_email_credentials():
     # Check if credentials are present from a previous installation.
     if email_credentials_file.is_file():
         email_credentials = json.loads(email_credentials_file.read_text())
-        if email_credentials.get("address", "").endswith("@gmail.com") and email_credentials.get("pswd", ""):
+        email_address = parseaddr(email_credentials["address"])
+        if email_address[1] and email_credentials.get("pswd", ""):
             return
+        else:
+            print("Stored email credentials not valid.")
 
     # While this does the job, we could use a Pydantic model for input data validation.
     print("\nPlease provide email credentials for API Key request")
     address = ""
     n = 0
     N = 5
-    while not address.endswith("@gmail.com") and n<N:
-        address = input("gmail address: ")
+    while not address and n<N:
+        address_input = input("gmail address: ")
+        address = parseaddr(address_input)[1]
         n+=1
     
-    if not address.endswith("@gmail.com"):
+    if not address:
         raise Exception("Failed to provide a valid gmail address.")
     
     pswd = getpass(f"Please provide app-password to connect to {address}: ")
@@ -157,9 +174,20 @@ def get_email_credentials():
     if pswd != pswd2:
         raise Exception("Passwords do not match.")
 
-    email_credentials_file.write_text(json.dumps({"address": address, "pswd": pswd}))
-    print("Email credentials stored successfully.")
-    
+    email_credentials = {"address": address, "pswd": pswd}
+    try:
+        imap_handler = IMAP_handler(email_credentials=email_credentials)
+        assert imap_handler.check()
+        print("Email credentials validated.")
+    except Exception:
+        raise Exception("Failed to connect to IMAP server. Please ensure email credentials are valid.")
+
+    try:
+        email_credentials_file.write_text(json.dumps(email_credentials))
+        print("Email credentials stored successfully.")
+    except Exception:
+        raise Exception(f"Failed to store credentials at {email_credentials_file.as_posix()}.")
+
 
 def main(args):
 
@@ -169,7 +197,10 @@ def main(args):
         print("WARNING: Developed using Python 3.12. If running into issues with other versions, switch to 3.12.")
 
     if args.clear:
-        clear_previous_installation(args.clear_secrets)        
+        clear_previous_installation()
+
+    if args.clear_secrets:
+        clear_secrets()
 
     # Create project virtual environment.
     if not DEPENDENCY_MANAGER_PATHS["common"]["project_venv"].is_dir():
@@ -179,7 +210,7 @@ def main(args):
     if not DEPENDENCY_MANAGER_PATHS["common"]["poetry_dir"].is_dir():
         setup_poetry()
 
-    # Intall dependencies
+    # Install dependencies
     install_deps()
 
     # Ask for email credentials if missing.

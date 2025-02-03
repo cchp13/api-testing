@@ -1,1 +1,3 @@
-This folder would contain testing files that verify that testing utilities remain functional. As an example, test_email_connection.py::test_get_email_body serves to check that my dummy gmail account can accept a connection and properly retrieve emails. This discards imap issues as the reason why any test would be failing, when applicable.
+This folder would contain testing files that verify that testing utilities remain functional. As an example, `test_pytest_reporting.py` serves to check that test outcome is properly captured by pytest and pytest-html, discarding systemic misreporting as a consequence of the tool conveying test results being flawed.
+
+As a CI consideration, these tests are not intended to run on every PR, but ideally they would be run on every machine used for automated testing before each release is approved.

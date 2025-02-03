@@ -1,19 +1,18 @@
 
 from copy import deepcopy
-import email
-import imaplib
 import json
 import logging
 from pathlib import Path
 import pytest
-import time
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.webdriver import WebDriver
 from setup_env import SECRETS
 
-from tests.utils.utils import ApiKeyHandler
+from tests.utils.api_key_handler import ApiKeyHandler
+from tests.utils.imap_handler import IMAP_handler
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -39,28 +38,39 @@ def pytest_addoption(parser):
         help="Wait given minutes for the request cap to refresh.",
     )
     parser.addoption(
-        "--update-api-key",
-        action="store_true",
-        default=False,
-        help="Whether to update the key locally stored with the outcome of the key retrieval test.",
-    )
-    parser.addoption(
         "--allow-missing-datapoints",
         action="store_true",
         default=False,
         help="Whether to pass a test in which the data series retrieved is not exhaustive.",
     )
 
-# ============================================== Fixtures ==============================================
-# AEMET
+
+@pytest.fixture(scope="session")
+def request_cap_wait(request):
+    return int(request.config.getoption("--wait-for-capacity"))
+
+
+@pytest.fixture(scope="session")
+def allow_missing_datapoints(request):
+    return bool(request.config.getoption("--allow-missing-datapoints"))
+
+
+# ============================================== AEMET ==============================================
+
 
 @pytest.fixture(scope="session")
 def landing_page():
-    return "https://opendata.aemet.es/centrodedescargas/inicio"
+    return {
+        "url": "https://opendata.aemet.es/centrodedescargas/inicio",
+    }
 
 @pytest.fixture(scope="session")
 def key_generation_page():
-    return "https://opendata.aemet.es/centrodedescargas/altaUsuario?"
+    return {
+        "url": "https://opendata.aemet.es/centrodedescargas/altaUsuario?",
+        "text": "Obtención API Key",
+    }
+
 
 @pytest.fixture(scope="session")
 def email_headers():
@@ -72,6 +82,20 @@ def email_headers():
 @pytest.fixture(scope="session")
 def base_api_url():
     return "https://opendata.aemet.es/opendata/api"
+
+@pytest.fixture(scope="session")
+def antartida_api_endpoint():
+    def _url(base_api, start_date, end_date, station):
+        return f"{base_api}/antartida/datos/fechaini/{start_date}/fechafin/{end_date}/estacion/{station}"
+
+    return _url
+
+@pytest.fixture(scope="session")
+def date_format():
+    def _format(time_zone):
+        return f"%Y-%m-%dT%H:%M:%S{time_zone}"
+    
+    return _format
 
 @pytest.fixture(scope="session")
 def data_point_structure():
@@ -118,17 +142,9 @@ def data_point_structure():
         'tmx'
     }
 
-@pytest.fixture(scope="session")
-def request_cap_wait(request):
-    return int(request.config.getoption("--wait-for-capacity"))
 
-@pytest.fixture(scope="session")
-def update_key(request):
-    return bool(request.config.getoption("--update-api-key"))
+# ============================================== API Key =============================================
 
-@pytest.fixture(scope="session")
-def allow_missing_datapoints(request):
-    return bool(request.config.getoption("--allow-missing-datapoints"))
 
 @pytest.fixture(scope="session")
 def api_key_handler():
@@ -136,7 +152,7 @@ def api_key_handler():
     return ApiKeyHandler(SECRETS[API_KEY_FILE_NAME], API_KEY_JSON_KEY)
 
 
-# Email service
+# ============================================== Email ==============================================
 
 @pytest.fixture(scope="session")
 def email_credentials() -> dict[str, str]:
@@ -147,95 +163,12 @@ def email_credentials() -> dict[str, str]:
 @pytest.fixture(scope="session")
 def gmail_imap_object(email_credentials):
 
-    class IMAP_handler:
-
-        DEFAULT_INBOX = "inbox"
-
-        def __init__(self, email_credentials = email_credentials, imap_url = 'imap.gmail.com'):
-            self._mail = imaplib.IMAP4_SSL(imap_url)
-            self.credentials = email_credentials
-
-        @property
-        def mail(self):
-            return self._mail
-
-        def start(self):
-            try:
-                self.mail.login(self.credentials["address"], self.credentials["pswd"])
-            except Exception as e:
-                logging.error(f"Login failed: {str(e)}")
-                raise
-            self.mail.select(self.DEFAULT_INBOX, readonly=True)  # Connect to the inbox.
-
-        def close(self):
-            self.mail.logout()
-
-        def restart(self):
-            self.close()
-            time.sleep(1)
-            self.start()
-
-        def _refresh_inbox(self):
-            self.mail.select(self.DEFAULT_INBOX, readonly=True)
-
-        def count_emails_by_subject(self, subject: str) -> int:
-            self._refresh_inbox()
-            status, messages = self.mail.search(None, f'SUBJECT "{subject}"')
-            if status == 'OK':
-                # Convert the message IDs to a list of email IDs
-                email_ids = messages[0].split()
-
-                if not email_ids:
-                    return 0
-                else:
-                    # Fetch the most recent email with the matching subject
-                    return len(email_ids)
-            else:
-                raise Exception("Cannot retrieve emails.")
-
-        def get_last_email_by_subject(self, subject: str) -> str:
-            self._refresh_inbox()
-            status, messages = self.mail.search(None, f'SUBJECT "{subject}"')
-            if status == 'OK':
-                # Convert the message IDs to a list of email IDs
-                email_ids = messages[0].split()
-
-                if not email_ids:
-                    return None
-                else:
-                    # Fetch the most recent email with the matching subject
-                    latest_email_id = email_ids[-1]
-                    status, msg_data = self.mail.fetch(latest_email_id, '(RFC822)')
-
-                    if status != 'OK':
-                        return None
-                    else:
-                        # Parse the email content
-                        raw_email = msg_data[0][1]
-                        msg = email.message_from_bytes(raw_email)
-
-                        # Extract the email body
-                        if not msg.is_multipart():
-                            body = msg.get_payload(decode=True).decode()
-                        else:
-                            body = ""
-                            for part in msg.walk():
-                                # Parts could be multi-part too. Will implement if blocking.
-                                try:
-                                    body_part = part.get_payload(decode=True).decode()
-                                    body += body_part
-                                except:
-                                    pass
-                        return body
-            else:
-                raise Exception("Cannot retrive emails.")
-
     IMAP_object = IMAP_handler(email_credentials=email_credentials)         
     IMAP_object.start()
 
     return IMAP_object
 
-# Selenium
+# ============================================== Selenium ==============================================
 
 @pytest.fixture(scope="session")
 def webdriver_options():
@@ -271,9 +204,7 @@ def webdriver_factory(webdriver_options):
             pass
 
 
-def warn_with_selenium_screenshot(driver: WebDriver, screenshot_name: str, description: str, exception_msg: str):
+def save_selenium_screenshot(driver: WebDriver, screenshot_name: str):
     screenshot = (Path("debug") / screenshot_name).with_suffix(".png")
     driver.save_screenshot(screenshot)
-    logger.warning(f"{description}")
-    logger.warning(f"Exception message: {exception_msg}")
-    logger.warning(f"Inspect screenshot {screenshot.as_posix()} for more information.")
+    return screenshot.as_posix()

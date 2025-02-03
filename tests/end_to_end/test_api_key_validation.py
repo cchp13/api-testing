@@ -4,11 +4,10 @@ import logging
 import math
 import time
 from unittest.mock import patch
-from urllib.parse import quote
 
-import requests
 import pytest
 
+from tests.utils.requests_functions import request_get_with_exception_handling, request_limit_reached
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -20,37 +19,19 @@ API_REQUEST_CAP_SLEEP = 5  # Seconds between attempts after api request cap is r
 
 
 # Input parameters
-# Dates and intervals could be randomized, but I would need more information about what to expect from the database.
 VALID_STATION_IDENTIFICATORS = ["89064", "89064R", "89064RA", "89070"]
 STARTING_DATES = [
-    # Included a very old datapoint since the antartic bases were founded around 1988-1989.
+    # Included a very old datapoint since the Antarctica bases were founded around 1988-1989.
+    # There is an argument for randomizing these, but it depends on the specific use intended for the data.
     datetime(year=y, month=6, day=15) for y in [1990, 2000, 2010, 2020, 2023, 2024]
 ]
 VALID_INTERVALS = [timedelta(minutes=15), timedelta(minutes=25), timedelta(hours=6) , timedelta(days=29)]
 
 
-def request_get_with_exception_handling(url, **kwargs):
-    n = 0
-    N = 5
-    while n<N:
-        try:
-            return requests.get(url, **kwargs)
-        except Exception as e:                
-            n+=1
-            logger.error(f"Request to {url=} failed with exception: {str(e)}")
-            
-    pytest.fail(f"Failed to complete the request. Inspect logged ERRORs for more information.")
-
-def is_too_many_requests(response):
-    """
-    There are two different types of requests being made for the tests: requests to the API endpoint to query for
-    specific data, and requests to retrieve the json after successful data requests. Their structure differs.
-    """
-    try:
-        return response.json()["estado"] == 429
-    except:
-        return "429 Too Many Requests" in response.text
-
+@pytest.fixture(autouse=True, scope="module")
+def check_api_key_present(api_key_handler):
+    if not api_key_handler.key:
+        pytest.skip("No API key found. Please run `pytest test_api_key_retrieval.py` first.")
 
 @pytest.fixture()
 def request_get_retry(request_cap_wait):
@@ -60,18 +41,19 @@ def request_get_retry(request_cap_wait):
         N = 5
         response = request_get_with_exception_handling(url=url, headers=headers, params=querystring)
         while not response.ok and n<N:
-            if is_too_many_requests(response):
+            if request_limit_reached(response):
                 m = 0
                 M = request_cap_wait * 60 / API_REQUEST_CAP_SLEEP
-                while is_too_many_requests(response) and m<M:
+                while request_limit_reached(response) and m<M:
                     # Loop to wait for api request limit to expire
                     response = request_get_with_exception_handling(url=url, headers=headers, params=querystring)
                     time.sleep(API_REQUEST_CAP_SLEEP)
                     m+=1
 
-                if is_too_many_requests(response):
-                    # Note that we may fail during the first iteration of the outer loop if we fail for this reason.
-                    pytest.fail("Failed due to persistent API request cap. Increase value of --wait-for-cap.")
+                if request_limit_reached(response):
+                    # Note that we may fail the test during the first iteration of the outer loop if this is the cause.
+                    return response
+
             time.sleep(1)
             response = request_get_with_exception_handling(url=url, headers=headers, params=querystring)
             n+=1
@@ -81,20 +63,24 @@ def request_get_retry(request_cap_wait):
 
 
 @pytest.fixture()
-def make_request(base_api_url, api_key_handler, station, starting_date, interval, request_get_retry):
-    def _request_response(starting_date=starting_date, time_zone="+0000"):
-        if (
-            station == "89064R" and starting_date < ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE
-            or station == "89064RA" and starting_date > ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE
-        ):
-            pytest.skip("Parameter combination not applicable.")
+def make_request(
+    base_api_url,
+    api_key_handler,
+    station,
+    starting_date,
+    interval,
+    request_get_retry,
+    antartida_api_endpoint,
+    date_format,
+):
+    def _request_response(starting_date=starting_date, time_zone="UTC"):
 
         end_date = starting_date + interval
 
         # Prepare request components
-        starting_date_string = starting_date.strftime(f"%Y-%m-%dT%H:%M:%S{time_zone}")
-        end_date_string = end_date.strftime(f"%Y-%m-%dT%H:%M:%S{time_zone}")
-        url = f"{base_api_url}/antartida/datos/fechaini/{starting_date_string}/fechafin/{end_date_string}/estacion/{station}"
+        starting_date_string = starting_date.strftime(date_format(time_zone))
+        end_date_string = end_date.strftime(date_format(time_zone))
+        url = antartida_api_endpoint(base_api_url, starting_date_string, end_date_string, station)
         querystring = {"api_key": api_key_handler.key}
         headers = {'cache-control': "no-cache"}
 
@@ -109,32 +95,65 @@ def make_request(base_api_url, api_key_handler, station, starting_date, interval
 @pytest.mark.parametrize("station", VALID_STATION_IDENTIFICATORS)
 @pytest.mark.parametrize("starting_date", STARTING_DATES)
 @pytest.mark.parametrize("interval", VALID_INTERVALS)
-def test_api_key_valid_request(make_request, interval, data_point_structure, allow_missing_datapoints, request_get_retry):
+def test_api_key_valid_request(
+    make_request,
+    interval,
+    data_point_structure,
+    allow_missing_datapoints,
+    request_get_retry,
+    station,
+    starting_date
+):
 
+    logger.info(f"Making data request for {station=}, {starting_date=} and {interval=}.")
     request_response = make_request()
+    logger.info(f"Response text: {request_response.text}.")
+
     if (not request_response.ok):
     # Even if no data is retrieved, we still expect a 200 code for the API request itself.
-        pytest.fail(f"Request failed: {request_response.text}")
+        pytest.fail(f"Request failed. Inspect the logs for more information.")
+
+    if (
+        station == "89064R" and starting_date < ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE
+        or station == "89064RA" and starting_date > ESTACION_RADIOMETRICA_JCI_ARCHIVE_DATE
+    ):
+        # In this case, data is expected to be missing as per the documentation.
+        logger.info("This station does not cover this time interval. Expecting a 404 status.")
+        assert request_response.json() == {
+            "estado": 404,
+            "descripcion": "No hay datos que satisfagan esos criterios"
+        }
 
     ## Data availability
     if request_response.json()["estado"] == 404:
         # Whether this is a passed or failed test would depend on the specific business logic behind the API
         # consumption and the particular scope of these tests. I have finally opted for consider this a passing
         # behavior, since being able to properly inform about the lack of data for this query is expected behavior.
+        logger.info("A 404 status was returned. Ensuring description matches status code.")
         assert "No hay datos que satisfagan esos criterios" in request_response.json()["descripcion"]
         return
 
     ## Data retrieval
-    time.sleep(0.5)
+    logger.info(f"Retrieving data from {request_response.json()["datos"]}.")
     data_response = request_get_retry(request_response.json()["datos"])
+    # We will not log this response directly, as it may contain a large amount of data.
+
     if not data_response.ok:
-        pytest.fail(f"Data access failed: {data_response.text}")
+        # We can log it for troubleshooting if there was an error, no data is expected.
+        logger.error(f"Response text: {request_response.text}.")
+        pytest.fail(f"Request failed. Inspect the logs for more information.")
 
     data = data_response.json()
     N = len(data)
 
+    if N == 0:
+        # This is an odd scenario, but I've experienced it. Adding logging as a precaution.
+        logger.error(f"Data response content: {data_response.text}")
+        pytest.fail("No data points were retrieved, but the status was not 404 either.")
+
     ## Data validity
     if not allow_missing_datapoints:
+        logger.info("Checking data length.")
         # Check that number of data points is consistent with the time interval selected.
         n_points_estimated = interval // DATA_TIME_RESOLUTION
         if not(n_points_estimated <= N <= (n_points_estimated + 1)):
@@ -142,9 +161,11 @@ def test_api_key_valid_request(make_request, interval, data_point_structure, all
 
     # Verify consistency of data structure
     for i in range(0, math.ceil(N/100), N):
-        # Since the data series is a list of dictionaries, there is no way to ensure check the structure is consistent
-        # other than checking each element. Beigh thorough may be an unnecessary consumption of testing resources. To
-        # mitigate the issue, we will only verify roughly 100 equispaced datapoints.
+        logger.info("Verifying datapoint structure.")
+        # Since the data series is a list of dictionaries, I do not see another way to ensure check the structure is
+        # consistent other than checking each element. Beinh thorough may be an unnecessary consumption of testing
+        # resources. To mitigate the issue, we will only verify roughly 100 equispaced datapoints for each query.
+        logger.info(f"Data point fields retrieved: {", ".join(data[i].keys())}")
         assert set(data[i].keys()) == data_point_structure
 
 
@@ -153,67 +174,75 @@ def test_api_key_valid_request(make_request, interval, data_point_structure, all
     [(VALID_STATION_IDENTIFICATORS[0], STARTING_DATES[-1], VALID_INTERVALS[1])]
 )
 def test_unauthorized_request(api_key_handler, make_request):
-    """Test that a request made with an invalid key returns a 4XX status code."""
-    
-    # Simply mock the key attribute at the key handler, leaving every other system untouched.
+    """Test that a request made with an invalid key returns a 401 status code."""
+    # Mock the key attribute stored at the key handler, leaving every other system untouched.
     with patch.object(api_key_handler, "_key", "fake.key"):
         response = make_request()
         assert response.json() == {'descripcion': 'API key invalido', 'estado': 401}
         
 
 @pytest.mark.parametrize(
-    "station,starting_date,interval",
-    [(VALID_STATION_IDENTIFICATORS[0], STARTING_DATES[-1], timedelta(hours=-15))]
+    "starting_date,interval",
+    [(STARTING_DATES[-1], timedelta(hours=-15))]
 )
-def test_negative_interval(make_request):
+@pytest.mark.parametrize("station", VALID_STATION_IDENTIFICATORS)
+def test_negative_interval(make_request, station, starting_date, interval):
     """Test that a request made with starting_date later than end_date simply returns no data."""
     
+    logger.info(f"Making data request for {station=}, {starting_date=} and {interval=}.")
     response = make_request()
     assert response.json() == {'descripcion': 'No hay datos que satisfagan esos criterios', 'estado': 404}
 
-@pytest.mark.parametrize("station", VALID_STATION_IDENTIFICATORS[:1])
+
+@pytest.mark.parametrize("station", VALID_STATION_IDENTIFICATORS)
 @pytest.mark.parametrize("starting_date", 
     [datetime(year=2000, month=1, day=1) + i*timedelta(weeks=26) for i in range(12)]
 )
 @pytest.mark.parametrize("interval", [timedelta(hours=1)])
-def test_time_zone_consistency(make_request, starting_date, request_get_retry):
+def test_time_zone_consistency(make_request, starting_date, request_get_retry, station, interval):
     """
-    Test time zone consistency in the output. We observe that the data provided is always UCT+0000.
+    Test time zone consistency in the output. We observe that the data provided is always UTC+0000.
 
-    We have learnt that the database accessed with this endpoint is not thorough and there are missing timestamps.
+    We have learned that the database accessed with this endpoint is not thorough and there are missing timestamps.
     To remove that interference from this test, we will request the exact data points by adjusting the start/end dates
     so that the queries in CET and CEST are referring to the exact same universal times.
 
     About parametrization:
     - One interval is enough for this test. Jumps on time zone consistency happening in the short term would be odd.
     - Data on this endpoint is updated yearly. We will use two dates per year: one during summer, one during winter.
+    - We want to validate this behavior for every database, so we will check the for stations.
     
     So one interval and two dates per year will suffice. To avoid making the exercise slower, we will test a few.
     """
 
-    request_response_cet = make_request(starting_date=starting_date, time_zone="CET")
-    if (not request_response_cet.ok):
-    # The test serves no purpose if this data is not avaiable.
-        pytest.skip(f"No data to be validated for the current query.")
+    def _get_data_for_timezone(time_zone, starting_time):
 
-    # CET data retrieval
-    cet_data_response = request_get_retry(request_response_cet.json()["datos"])
-    if not cet_data_response.ok:
-        pytest.fail(f"Data access failed: {cet_data_response.text}")
-    cet_data=cet_data_response.json()
+        logger.info(f"Making data request for {station=}, {starting_time=} and {interval=} with CET time zone.")
+        request_response = make_request(starting_date=starting_time, time_zone=time_zone)
+        logger.info(f"Response text: {request_response.text}.")
 
-    request_response_cest = make_request(starting_date=starting_date+timedelta(hours=1), time_zone="CEST")
-    if (not request_response_cest.ok):
-    # The exact UCT interval was requested. Failure means CET/CEST is not respected.
-        pytest.fail(f"Should be exact same data.")
+        if (not request_response.ok):
+        # Even if no data is retrieved, we still expect a 200 code for the API request itself.
+            pytest.fail(f"Request failed. Inspect the logs for more information.")
 
-    #  CEST retrieval
-    cest_data_response = request_get_retry(request_response_cest.json()["datos"])
-    if not cest_data_response.ok:
-        pytest.fail(f"Data access failed: {cest_data_response.text}")
-    cest_data=cest_data_response.json()
+        if request_response.json()["estado"] == 404:
+            # This test serves no purpose in this case. Parametrization should probably be reviewed.
+            pytest.skip("Parametrization not relevant.")
+
+        # Data retrieval
+        logger.info(f"Retrieving data from {request_response.json()["datos"]}.")
+        data_response = request_get_retry(request_response.json()["datos"])
+        if not data_response.ok:
+            pytest.fail(f"Data access failed: {data_response.text}")
+
+        return data_response.json()
+
+    utc_data = _get_data_for_timezone("UTC", starting_date-timedelta(hours=1))
+    cet_data = _get_data_for_timezone("CET", starting_date)
+    cest_data = _get_data_for_timezone("CEST", starting_date+timedelta(hours=1))
 
     # Verify times match
+    utc_times = [datapoint["fhora"] for datapoint in utc_data]
     cet_times = [datapoint["fhora"] for datapoint in cet_data]
     cest_times = [datapoint["fhora"] for datapoint in cest_data]
-    assert cet_times == cest_times
+    assert utc_times == cet_times == cest_times

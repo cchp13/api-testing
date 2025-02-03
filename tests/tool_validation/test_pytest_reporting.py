@@ -20,7 +20,7 @@ def test_setup_error(setup_error):
 @pytest.fixture()
 def teardown_error():
     yield
-    raise Exception("Setup error.")
+    raise Exception("Teardown error.")
 
 
 def test_teardown_error(teardown_error):
